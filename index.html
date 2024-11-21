@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Signal Plotter</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.6/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body class="bg-gray-100 font-sans flex flex-col min-h-screen">
+    <header class="bg-blue-600 text-white py-6 text-center">
+      <h1 class="text-3xl font-bold">Signal Plotter</h1>
+    </header>
+    <main class="flex-grow p-6">
+      <div class="max-w-4xl mx-auto bg-white p-8 rounded-lg shadow-lg">
+        <form id="plot-form" class="space-y-6">
+          <div>
+            <label for="n-range" class="block text-lg font-medium text-gray-700">n Range (e.g., -5,7):</label>
+            <input type="text" id="n-range" value="-10,10" required class="mt-2 p-2 w-full border border-gray-300 rounded-md" />
+          </div>
+          <div>
+            <label for="equation" class="block text-lg font-medium text-gray-700">Enter Equation (use `n` as variable, e.g., `-2*u(-n-3) + delta(n-2)`):</label>
+            <input type="text" value="-2U(-n-3)" id="equation" placeholder="Enter your equation here" required class="mt-2 p-2 w-full border border-gray-300 rounded-md" />
+            <label for="signal" class="block text-lg font-medium text-gray-700 mt-4">Or choose Equation:</label>
+            <select id="signal" class="mt-2 p-2 w-full border border-gray-300 rounded-md bg-white text-gray-700">
+              <option value="-2U(-n-3)">X(n) = -2U(-n-3)</option>
+              <option value="4U(n+2)-4U(n-3)">X(n) = 4U(n+2) - 4U(n-3)</option>
+              <option value="-2U(n-1) + 4U(n+2)">X(n) = -2U(n-1) + 4U(n+2)</option>
+              <option value="-2U(n-1) + 3U(n+2) - delta(n-4)">X(n) = -2U(n-1) + 3U(n+2) - δ(n-4)</option>
+              <option value="-2U(n+2) - 2U(n-3) - delta(n-3)">X(n) = -2U(n+2) - 2U(n-3) - δ(n-3)</option>
+              <option value="2U(n) - delta(n-3)">X(n) = 2U(n) - δ(n-3)</option>
+            </select>
+          </div>
+          <button type="submit" class="w-full py-2 px-4 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Show me</button>
+        </form>
+        <div class="mt-8">
+          <canvas id="signal-plot" width="800" height="400" class="w-full"></canvas>
+        </div>
+      </div>
+    </main>
+    <footer class="bg-blue-600 text-white py-4 text-center">
+      <p class="text-sm">Made by Mohamed Karam</p>
+    </footer>
+    <script>
+      let currentChart = null; // Track the current chart instance
+      // unit step function
+      const u = (n) => (n >= 0 ? 1 : 0);
+      // impulse function
+      const delta = (n) => (n === 0 ? 1 : 0);
+      // Cache RegExp patterns
+      const PATTERNS = {
+        uFunction: /(\d*)\s*\*?\s*u\(([^)]+)\)/g,
+        deltaFunction: /(\d*)\s*\*?\s*delta\(([^)]+)\)/g,
+        mathFunctions: /Math\./g,
+        unsafeFunctions: /(eval|Function|require|process|global|window|\[\s*\]|{|})/gi,
+        validEquation: /^[\d\s+\-*/().u\sdelta\sn\s]*$/
+      };
+
+      const ERRORS = {
+        INVALID_SYNTAX: "Invalid equation syntax.",
+        UNSAFE_CONTENT: "Equation contains unsafe content.",
+        EVALUATION_ERROR: "Error evaluating equation."
+      };
+
+      const validateAndEvaluateEquation = (nArray, equation) => {
+        try {
+          if (!Array.isArray(nArray) || !equation?.trim()) {
+            throw new Error('Invalid input');
+          }
+          if (!PATTERNS.validEquation.test(equation)) {
+            throw new Error(ERRORS.INVALID_SYNTAX);
+          }
+          if (PATTERNS.unsafeFunctions.test(equation)) {
+            throw new Error(ERRORS.UNSAFE_CONTENT);
+          }
+          const processedEquation = equation.trim().replace(PATTERNS.uFunction, (match, coeff, inner) => {
+            return `${coeff || '1'} * u(${inner.trim()})`;
+          }).replace(PATTERNS.deltaFunction, (match, coeff, inner) => {
+            return `${coeff || '1'} * delta(${inner.trim()})`;
+          }).replace(PATTERNS.mathFunctions, '');
+          const evalFunc = Function('n', 'u', 'delta', `return ${processedEquation}`);
+          const result = nArray.map(n => {
+            const value = evalFunc(n, u, delta);
+            if (typeof value !== 'number' || !isFinite(value)) {
+              throw new Error('Invalid result');
+            }
+            return value;
+          });
+          if (result.some(isNaN)) {
+            throw new Error("Invalid equation results");
+          }
+          return result;
+        } catch (error) {
+          alert(`Error in the equation. ${error.message}`);
+          console.error(error);
+          return null;
+        }
+      };
+      document.getElementById("signal").addEventListener("change", (event) => {
+        const equationInput = event.target.value;
+        document.getElementById("equation").value = equationInput;
+      });
+      document.getElementById("plot-form").addEventListener("submit", (event) => {
+        event.preventDefault();
+        const nRangeInput = document.getElementById("n-range").value.split(",");
+        const equationInput = document.getElementById("equation").value.trim().toLowerCase();
+        if (nRangeInput.length !== 2 || isNaN(nRangeInput[0]) || isNaN(nRangeInput[1])) {
+          alert("Invalid n range. Please enter two numbers separated by a comma.");
+          return;
+        }
+        const nRange = nRangeInput.map(Number);
+        const nArray = Array.from({
+          length: nRange[1] - nRange[0] + 1
+        }, (_, i) => nRange[0] + i);
+        const signal = validateAndEvaluateEquation(nArray, equationInput);
+        if (!signal) return;
+        if (currentChart) {
+          currentChart.destroy();
+        }
+        const maxSignal = Math.max(...signal);
+        const minSignal = Math.min(...signal);
+        const yMax = maxSignal + 3;
+        const ctx = document.getElementById("signal-plot").getContext("2d");
+        currentChart = new Chart(ctx, {
+          type: "bar",
+          data: {
+            labels: nArray,
+            datasets: [{
+              label: `Signal: ${equationInput}`,
+              data: signal,
+              backgroundColor: "blue",
+              borderColor: "blue",
+              borderWidth: 2,
+              pointRadius: 3,
+              fill: false,
+              barThickness: 1
+            }]
+          },
+          options: {
+            responsive: true,
+            scales: {
+              x: {
+                title: {
+                  display: true,
+                  text: "n"
+                }
+              },
+              y: {
+                title: {
+                  display: true,
+                  text: "X(n)"
+                },
+                max: yMax,
+              }
+            },
+          }
+        });
+      });
+    </script>
+  </body>
+</html>
